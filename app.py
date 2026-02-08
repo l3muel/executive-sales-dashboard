@@ -64,26 +64,64 @@ def generate_static_insights(df):
     }
 
 # --- 3. AI ANALYSIS ENGINE ---
-def get_ai_response(summary_text):
+# --- 3. ADVANCED AI ENGINE ---
+def get_ai_response(df):
+    """
+    Constructs a detailed prompt with trend analysis and sends it to Gemini.
+    """
     if not API_KEY:
-        return "⚠️ **AI Feature Locked:** Please add `GOOGLE_API_KEY` to `.streamlit/secrets.toml` to unlock the Executive Consultant."
+        return "⚠️ **AI Feature Locked:** Please add `GOOGLE_API_KEY` to `.streamlit/secrets.toml`."
+
+    # 1. Calculate Key Metrics
+    total_sales = df['Sales'].sum()
+    total_profit = df['Profit'].sum()
+    profit_margin = (total_profit / total_sales * 100) if total_sales > 0 else 0
     
+    # 2. Identify Trends (Month over Month)
+    if 'Month_Year' in df.columns:
+        monthly_sales = df.groupby('Month_Year')['Sales'].sum().sort_index()
+        latest_month = monthly_sales.iloc[-1]
+        prev_month = monthly_sales.iloc[-2] if len(monthly_sales) > 1 else latest_month
+        mom_growth = ((latest_month - prev_month) / prev_month) * 100
+        trend_str = f"{mom_growth:+.1f}% vs previous month"
+    else:
+        trend_str = "Data unavailable"
+
+    # 3. Identify "Problem Areas" (Sub-Categories losing money)
+    loss_makers = df.groupby('Sub_Category')['Profit'].sum()
+    loss_makers = loss_makers[loss_makers < 0].sort_values().head(3).index.tolist()
+    loss_str = ", ".join(loss_makers) if loss_makers else "None"
+
+    # 4. Construct the "Chief Strategy Officer" Prompt
+    system_prompt = f"""
+    You are the Chief Strategy Officer (CSO) of a Global Retail Company. 
+    Analyze the dashboard data below and provide a high-level executive summary.
+    
+    **Data Context:**
+    - Total Revenue: ${total_sales:,.0f}
+    - Net Profit: ${total_profit:,.0f} ({profit_margin:.1f}% Margin)
+    - Sales Trend: {trend_str}
+    - Critical Loss-Makers (Money losing categories): {loss_str}
+    - Top Performing Region: {df.groupby('Region')['Sales'].sum().idxmax()}
+    
+    **Your Mission:**
+    1. Assess the financial health (Is the margin healthy? Is growth positive?).
+    2. Identify the single biggest risk based on the loss-making categories.
+    3. Propose 2 actionable strategies to improve profitability next quarter.
+    
+    **Format:**
+    Use Markdown with emojis. Keep it concise (bullet points). 
+    Do not mention "based on the data provided"—jump straight into the insights.
+    """
+
+    # 5. Call the API
     try:
         genai.configure(api_key=API_KEY)
-        # Try Flash model first (fastest), then Pro
-        models = ['gemini-1.5-flash', 'gemini-pro']
-        for m in models:
-            try:
-                model = genai.GenerativeModel(m)
-                response = model.generate_content(
-                    f"You are a Fortune 500 Strategy Consultant. Analyze this summary and provide 3 strategic recommendations:\n{summary_text}"
-                )
-                return response.text
-            except:
-                continue
-        return "❌ AI Service Unavailable currently."
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(system_prompt)
+        return response.text
     except Exception as e:
-        return f"❌ Connection Error: {str(e)}"
+        return f"❌ Analysis Failed: {str(e)}"
 
 # --- MAIN DASHBOARD UI ---
 def main():
