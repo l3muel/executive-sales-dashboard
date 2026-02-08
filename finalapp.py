@@ -1,148 +1,220 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 import os
 import google.generativeai as genai
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Executive AI Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title="Universal Business Analytics",
+    page_icon="🚀",
+    layout="wide"
+)
 
 # --- SETUP API KEY ---
 API_KEY = st.secrets.get("GOOGLE_API_KEY", None)
 
-# --- 1. DATA LOADER (Adapted for your new dataset) ---
-@st.cache_data
-def load_data():
-    file_path = "data/Global_Superstores.csv"
+# --- HELPER: SIMPLE FORECASTING ---
+def predict_sales(df, months=3):
+    """Simple Linear Regression to forecast future sales."""
+    # Group by month index (0, 1, 2...)
+    monthly_data = df.groupby('Month_Year')['Sales'].sum().reset_index()
+    monthly_data = monthly_data.sort_values('Month_Year')
     
-    if os.path.exists(file_path):
-        try:
-            # Load with flexible encoding
-            df = pd.read_csv(file_path, encoding='ISO-8859-1')
-            
-            # --- RENAME COLUMNS TO STANDARD NAMES ---
-            # We map your specific columns to generic names the app likes
-            df = df.rename(columns={
-                'InvoiceDate': 'Order_Date',
-                'Country': 'Region',  # We'll use Country as our "Region" filter
-                'Description': 'Product'
-            })
-            
-            # --- CREATE THE MISSING "SALES" COLUMN ---
-            # Sales = Quantity * Price
-            df['Sales'] = df['Quantity'] * df['Price']
-            
-            # --- FIX DATE FORMAT ---
-            df['Order_Date'] = pd.to_datetime(df['Order_Date'])
-            
-            return df
-            
-        except Exception as e:
-            st.warning(f"⚠️ Could not read file: {e}. Switching to Mock Data.")
+    # Create numeric time index
+    monthly_data['Time_Index'] = np.arange(len(monthly_data))
     
-    # --- MOCK DATA GENERATOR (Fallback) ---
-    dates = pd.date_range(start="2023-01-01", periods=100)
-    data = {
-        "Order_Date": np.random.choice(dates, 500),
-        "Product": np.random.choice(["Laptop", "Chair", "Mug"], 500),
-        "Region": np.random.choice(["UK", "France", "Germany"], 500),
-        "Sales": np.random.uniform(100, 5000, 500)
-    }
-    return pd.DataFrame(data)
+    # Fit Line (y = mx + c)
+    if len(monthly_data) > 1:
+        slope, intercept = np.polyfit(monthly_data['Time_Index'], monthly_data['Sales'], 1)
+        
+        # Generate Future Data
+        last_index = monthly_data['Time_Index'].max()
+        future_indices = np.arange(last_index + 1, last_index + 1 + months)
+        future_sales = slope * future_indices + intercept
+        
+        # Create Future Dates
+        last_date = monthly_data['Month_Year'].max()
+        future_dates = [last_date + pd.DateOffset(months=i+1) for i in range(months)]
+        
+        forecast_df = pd.DataFrame({
+            'Month_Year': future_dates,
+            'Sales': future_sales,
+            'Type': ['Forecast'] * months
+        })
+        
+        history_df = monthly_data[['Month_Year', 'Sales']].copy()
+        history_df['Type'] = 'History'
+        
+        return pd.concat([history_df, forecast_df])
+    return monthly_data
 
-# --- 2. AI ANALYSIS ENGINE ---
-def generate_ai_insight(summary_text):
+# --- AI: TALK TO DATA ---
+def ask_ai_about_data(df, question):
     if not API_KEY:
-        return "⚠️ **Simulation Mode:** Add GOOGLE_API_KEY to .streamlit/secrets.toml to activate AI."
-
-    genai.configure(api_key=API_KEY)
+        return "⚠️ Please configure your Google API Key."
     
-    # Try models in order of preference
-    models_to_try = ['gemini-1.5-flash', 'gemini-pro', 'gemini-1.0-pro']
+    # Create a small summary to send to AI (sending whole DB is too big)
+    sample = df.head(5).to_markdown()
+    columns = list(df.columns)
+    stats = df.describe().to_markdown()
     
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                f"You are a Senior Data Consultant. Analyze this summary:\n{summary_text}"
-            )
-            return response.text
-        except Exception:
-            continue
-            
-    return "❌ AI Connection Failed. Please run: pip install --upgrade google-generativeai"
+    prompt = f"""
+    You are a Data Analyst Python Assistant.
+    Here is the dataset schema:
+    Columns: {columns}
+    Sample Data:
+    {sample}
+    Key Statistics:
+    {stats}
+    
+    User Question: "{question}"
+    
+    Answer the question based on the data summary provided. 
+    If the answer requires calculation you cannot do, explain how you would calculate it.
+    Keep it short and professional.
+    """
+    
+    try:
+        genai.configure(api_key=API_KEY)
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"❌ AI Error: {e}"
 
 # --- MAIN APP ---
 def main():
-    st.title("🚀 Global Retail Performance Dashboard")
-    st.markdown("### AI-Powered Strategic Insights")
+    st.title("🚀 Universal Business Analytics Platform")
+    st.markdown("---")
+
+    # --- 1. SIDEBAR: DATA UPLOAD ---
+    st.sidebar.header("📂 Data Source")
+    uploaded_file = st.sidebar.file_uploader("Upload your CSV", type=['csv'])
     
-    df = load_data()
+    df = None
     
-    # Sidebar Filters
-    st.sidebar.header("Filter Data")
-    if 'Region' in df.columns:
-        countries = df['Region'].unique()
-        selected_countries = st.sidebar.multiselect("Select Country", countries, default=countries[:5]) # Select top 5 by default
-        if selected_countries:
-            filtered_df = df[df['Region'].isin(selected_countries)]
-        else:
-            filtered_df = df
+    # Load logic
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.sidebar.success("✅ Custom File Loaded")
+        except Exception as e:
+            st.sidebar.error(f"Error: {e}")
+    elif os.path.exists("Superstore.csv"):
+        df = pd.read_csv("Superstore.csv", encoding='ISO-8859-1')
+        st.sidebar.info("Using Default Superstore Data")
     else:
-        filtered_df = df
+        st.error("⚠️ No data found. Upload a CSV or ensure 'Superstore.csv' is in the folder.")
+        st.stop()
 
-    # --- KPIs (Modified: Only Revenue, No Profit) ---
-    total_revenue = filtered_df['Sales'].sum()
-    total_orders = filtered_df.shape[0]
-    avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+    # --- 2. DYNAMIC COLUMN MAPPING (The Magic) ---
+    # We need to know which columns are which. Ask the user!
+    st.sidebar.subheader("⚙️ Column Mapping")
+    all_cols = list(df.columns)
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Revenue", f"${total_revenue:,.0f}")
-    c2.metric("Total Transactions", f"{total_orders:,}")
-    c3.metric("Avg Order Value", f"${avg_order_value:.2f}")
+    # Try to guess the columns automatically
+    default_date = next((c for c in all_cols if 'date' in c.lower()), all_cols[0])
+    default_sales = next((c for c in all_cols if 'sales' in c.lower() or 'rev' in c.lower()), all_cols[1] if len(all_cols)>1 else all_cols[0])
+    default_profit = next((c for c in all_cols if 'profit' in c.lower()), all_cols[2] if len(all_cols)>2 else all_cols[0])
+    default_cat = next((c for c in all_cols if 'cat' in c.lower() or 'seg' in c.lower()), all_cols[3] if len(all_cols)>3 else all_cols[0])
 
-    st.divider()
+    col_date = st.sidebar.selectbox("Date Column", all_cols, index=all_cols.index(default_date))
+    col_sales = st.sidebar.selectbox("Sales/Revenue Column", all_cols, index=all_cols.index(default_sales))
+    col_profit = st.sidebar.selectbox("Profit Column", all_cols, index=all_cols.index(default_profit))
+    col_cat = st.sidebar.selectbox("Category/Segment Column", all_cols, index=all_cols.index(default_cat))
 
-    col_charts, col_ai = st.columns([2, 1])
-    
-    with col_charts:
-        st.subheader("📈 Revenue Trends")
-        if 'Order_Date' in filtered_df.columns:
-            # --- UNIVERSAL FIX (Works on ALL Pandas versions) ---
-            # Create a temporary column for the month to avoid "freq" errors entirely
-            filtered_df['Month_Year'] = filtered_df['Order_Date'].dt.to_period('M').dt.to_timestamp()
-            
-            daily = filtered_df.groupby('Month_Year')['Sales'].sum().reset_index()
-            fig_line = px.line(daily, x='Month_Year', y='Sales', title="Monthly Sales Trend")
-            st.plotly_chart(fig_line, use_container_width=True)
-            
-        st.subheader("🏆 Top 10 Best-Selling Products")
-        if 'Product' in filtered_df.columns:
-            # Group by Product and take Top 10
-            top_products = filtered_df.groupby('Product')['Sales'].sum().sort_values(ascending=False).head(10).reset_index()
-            fig_bar = px.bar(top_products, x='Sales', y='Product', orientation='h', title="Top 10 Products by Revenue")
-            fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}) # Sort bars
-            st.plotly_chart(fig_bar, use_container_width=True)
-            
-    with col_ai:
-        st.subheader("🤖 AI Consultant")
+    # --- 3. DATA CLEANING & PREP ---
+    try:
+        # Standardize our internal names based on user selection
+        clean_df = df.rename(columns={
+            col_date: 'Order_Date',
+            col_sales: 'Sales',
+            col_profit: 'Profit',
+            col_cat: 'Category'
+        })
         
-        # Smart Summary for AI
-        top_product_name = "N/A"
-        if 'Product' in filtered_df.columns and not filtered_df.empty:
-            top_product_name = filtered_df.groupby('Product')['Sales'].sum().idxmax()
-            
-        summary = (
-            f"Total Revenue: ${total_revenue:,.2f}\n"
-            f"Total Orders: {total_orders}\n"
-            f"Top Selling Product: {top_product_name}\n"
-            f"Countries Analyzed: {len(filtered_df['Region'].unique())}"
+        # Convert Date
+        clean_df['Order_Date'] = pd.to_datetime(clean_df['Order_Date'], dayfirst=True, errors='coerce')
+        clean_df['Month_Year'] = clean_df['Order_Date'].dt.to_period('M').dt.to_timestamp()
+        
+        # Force Numerics
+        clean_df['Sales'] = pd.to_numeric(clean_df['Sales'], errors='coerce').fillna(0)
+        clean_df['Profit'] = pd.to_numeric(clean_df['Profit'], errors='coerce').fillna(0)
+        
+    except Exception as e:
+        st.error(f"❌ Data Processing Failed. Check your column mapping. Error: {e}")
+        st.stop()
+
+    # --- 4. DASHBOARD TABS ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "🔮 Forecast", "🗣️ Talk to Data", "🤖 Strategy"])
+
+    # === TAB 1: OVERVIEW ===
+    with tab1:
+        # KPIs
+        total_sales = clean_df['Sales'].sum()
+        total_profit = clean_df['Profit'].sum()
+        
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Total Revenue", f"${total_sales:,.0f}")
+        k2.metric("Total Profit", f"${total_profit:,.0f}")
+        k3.download_button(
+            label="📥 Download Clean Data",
+            data=clean_df.to_csv(index=False).encode('utf-8'),
+            file_name='analyzed_data.csv',
+            mime='text/csv',
         )
         
-        if st.button("Generate Report"):
-            with st.spinner("Analyzing..."):
-                st.markdown(generate_ai_insight(summary))
+        # Chart
+        st.subheader("Performance by Category")
+        cat_perf = clean_df.groupby('Category')[['Sales', 'Profit']].sum().reset_index()
+        fig = px.bar(cat_perf, x='Category', y=['Sales', 'Profit'], barmode='group', title="Sales vs Profit")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # === TAB 2: FORECAST ===
+    with tab2:
+        st.subheader("🔮 3-Month Sales Forecast")
+        st.info("Using Linear Regression Trend Analysis")
+        
+        forecast_data = predict_sales(clean_df)
+        
+        fig_cast = px.line(forecast_data, x='Month_Year', y='Sales', color='Type', 
+                           title="Projected Sales Trend", 
+                           color_discrete_map={'History': 'blue', 'Forecast': 'red'})
+        # Add markers
+        fig_cast.update_traces(mode='lines+markers')
+        st.plotly_chart(fig_cast, use_container_width=True)
+        
+        # Show the numbers
+        st.write("Predicted Numbers:", forecast_data[forecast_data['Type']=='Forecast'])
+
+    # === TAB 3: TALK TO DATA (NLP) ===
+    with tab3:
+        st.subheader("🗣️ Ask Questions in Plain English")
+        user_q = st.text_input("Example: What is the highest selling category? Or, Which month had the lowest profit?")
+        
+        if user_q:
+            with st.spinner("Thinking..."):
+                answer = ask_ai_about_data(clean_df, user_q)
+                st.markdown(f"**Answer:** {answer}")
+
+    # === TAB 4: STRATEGY (Your Old Logic) ===
+    with tab4:
+        st.subheader("🤖 Executive Briefing")
+        if st.button("Generate Strategic Report"):
+            with st.spinner("Consulting Strategy Engine..."):
+                # Simple summary for the strategy engine
+                summary_stats = f"Sales: ${total_sales}, Profit: ${total_profit}. Top Category: {cat_perf.sort_values('Sales').iloc[-1]['Category']}"
+                
+                try:
+                    genai.configure(api_key=API_KEY)
+                    model = genai.GenerativeModel('gemini-pro')
+                    res = model.generate_content(f"Act as a CSO. Provide strategic advice based on: {summary_stats}")
+                    st.markdown(res.text)
+                except Exception as e:
+                    st.error(f"AI Error: {e}")
 
 if __name__ == "__main__":
     main()
