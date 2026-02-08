@@ -116,7 +116,7 @@ def get_ai_response(df):
 
     # 5. Call the API
     try:
-        genai.configure(api_key=API_KEY)
+        genai.configure(api_key=API_KEY)f
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(system_prompt)
         return response.text
@@ -220,23 +220,18 @@ def main():
             else:
                 st.success("✅ All sub-categories are profitable.")
 
+
     # === TAB 3: AI CONSULTANT ===
     with tab_ai:
         st.subheader("🤖 Artificial Intelligence Strategy Partner")
-        st.markdown("_This module uses Generative AI to analyze the current filter context and provide executive recommendations._")
+        st.info("This module acts as a Chief Strategy Officer, analyzing trends, margins, and loss-makers to generate an executive action plan.")
         
         if st.button("Generate Executive Briefing"):
-            with st.spinner("Analyzing market data..."):
-                # Prepare data summary for AI
-                summary = f"""
-                Total Sales: ${total_sales}
-                Total Profit: ${total_profit}
-                Margin: {profit_margin:.2f}%
-                Top Region: {filtered_df.groupby('Region')['Sales'].sum().idxmax()}
-                Worst Performing Sub-Category: {filtered_df.groupby('Sub_Category')['Profit'].sum().idxmin()}
-                """
-                response = get_ai_response(summary)
+            with st.spinner("Consulting the Strategy Engine..."):
+                # PASS THE DATAFRAME, NOT JUST A STRING
+                response = get_ai_response(filtered_df)
                 st.markdown(response)
+
 
 if __name__ == "__main__":
     main()
