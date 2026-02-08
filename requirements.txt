@@ -3,3 +3,5 @@ pandas
 plotly
 numpy
 google-generativeai
+scikit-learn
+openai

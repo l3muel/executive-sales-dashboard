@@ -116,8 +116,8 @@ def get_ai_response(df):
 
     # 5. Call the API
     try:
-        genai.configure(api_key=API_KEY)f
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        genai.configure(api_key=API_KEY)
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         response = model.generate_content(system_prompt)
         return response.text
     except Exception as e:
