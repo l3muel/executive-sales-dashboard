@@ -79,7 +79,7 @@ def ask_ai_about_data(df, question):
     
     try:
         genai.configure(api_key=API_KEY)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
@@ -126,18 +126,18 @@ def main():
     col_profit = st.sidebar.selectbox("Profit Column", all_cols, index=all_cols.index(default_profit))
     col_cat = st.sidebar.selectbox("Category/Segment Column", all_cols, index=all_cols.index(default_cat))
 
-    # --- 3. DATA CLEANING & PREP ---
+   # --- 3. DATA CLEANING & PREP ---
     try:
-        # Standardize our internal names based on user selection
-        clean_df = df.rename(columns={
-            col_date: 'Order_Date',
-            col_sales: 'Sales',
-            col_profit: 'Profit',
-            col_cat: 'Category'
-        })
+        # SAFETY FIX: Select ONLY the columns we need first to avoid duplicates
+        clean_df = df[[col_date, col_sales, col_profit, col_cat]].copy()
+        
+        # Now rename them strictly
+        clean_df.columns = ['Order_Date', 'Sales', 'Profit', 'Category']
         
         # Convert Date
         clean_df['Order_Date'] = pd.to_datetime(clean_df['Order_Date'], dayfirst=True, errors='coerce')
+        
+        # Create Month_Year for sorting/grouping
         clean_df['Month_Year'] = clean_df['Order_Date'].dt.to_period('M').dt.to_timestamp()
         
         # Force Numerics
@@ -210,7 +210,7 @@ def main():
                 
                 try:
                     genai.configure(api_key=API_KEY)
-                    model = genai.GenerativeModel('gemini-pro')
+                    model = genai.GenerativeModel('gemini-3-flash-preview')
                     res = model.generate_content(f"Act as a CSO. Provide strategic advice based on: {summary_stats}")
                     st.markdown(res.text)
                 except Exception as e:
