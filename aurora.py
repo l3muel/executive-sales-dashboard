@@ -6,6 +6,7 @@ import numpy as np
 import google.generativeai as genai
 from datetime import datetime
 
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Aurora Executive Command Center",
